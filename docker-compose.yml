@@ -1,0 +1,44 @@
+version: "3.9"  # facultatif mais explicite : version du schema Compose
+
+services:
+  db:
+    container_name: db-beers
+    build: ./sql                 # Construit une image "db" depuis ./sql (doit contenir un Dockerfile).
+    restart: always              # Redémarre automatiquement si le conteneur s'arrête inopinément.
+    ports:
+      # MySQL écoute en INTERNE sur 3306. On publie sur 3307 côté hôte
+      # pour éviter les conflits avec un MySQL déjà présent en local.
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${pass}
+      MYSQL_DATABASE: ${database}
+    # S'assurer que MySQL est bien UP avant de démarrer l'API
+    healthcheck:
+      # mysqladmin ping renvoie 0 quand le serveur est prêt.
+      # -h localhost      : cible le serveur local dans le conteneur
+      # -p${admin}        : mot de passe root (substitué depuis .env)
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${admin}"]
+      interval: 5s       # fréquence entre checks
+      timeout: 3s        # délai max d'un check
+      retries: 20        # nb d'essais avant de marquer "unhealthy"
+      start_period: 10s  # délai de grâce avant de commencer à checker
+    volumes:
+      # Persistance des données MySQL : elles survivent aux recreates des conteneurs.
+      - db_data:/var/lib/mysql
+      # 👉 Si tu utilises l'image officielle MySQL, tu peux initialiser le schéma
+      # en montant des scripts SQL ici (exécutés au premier démarrage) :
+      # - ./sql/beer.sql:/docker-entrypoint-initdb.d/beer.sql:ro
+
+  api:
+    container_name: api-beer
+    build: ./api                 # Construit l'image Flask depuis ./api (ton Dockerfile)
+    ports:
+      # Expose le port 5000 du conteneur sur 80 de l'hôte.
+      - "80:5000"
+    depends_on:
+      # Démarre 'api' seulement quand 'db' est "healthy".
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:                 # volume nommé pour la persistance du répertoire de données MySQL

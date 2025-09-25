@@ -1,86 +1,85 @@
-from app import mysql
-
 from flask import jsonify, render_template
+from sqlalchemy import text
+from app import db
 
 class BeerController:
     def getBeers(self):
-        try :
-            cur = mysql.connection.cursor()
-            cur.execute("SELECT nom_article, nom_marque, volume, titrage, prix_achat, nom_couleur, nom_type\
-                        FROM article as a\
-                        inner join marque as m using (id_marque)\
-                        inner join couleur as c using (id_couleur)\
-                        inner join type as t using (id_type)\
-                ")
-            resp = cur.fetchall()
-            cur.close()
+        try:
+            sql = text("""
+                SELECT nom_article, nom_marque, volume, titrage, prix_achat, nom_couleur, nom_type
+                FROM article AS a
+                INNER JOIN marque AS m USING (id_marque)
+                INNER JOIN couleur AS c USING (id_couleur)
+                INNER JOIN type AS t USING (id_type)
+            """)
+            rows = db.session.execute(sql).fetchall()
             beers = []
-            if resp is not None:
-                for beer in resp:
-                    beers.append({
-                        'nom_article': beer[0],
-                        'nom_marque': beer[1],
-                        'volume': int(beer[2]),
-                        'titrage': float(beer[3]) if beer[3] else None,
-                        'prix_ht': int(beer[4]),
-                        'prix_15': int(beer[4])*1.15,
-                        'couleur': beer[5],
-                        'type': beer[6]
-                    })
+            for r in rows:
+                beers.append({
+                    'nom_article': r[0],
+                    'nom_marque':  r[1],
+                    'volume':      int(r[2]) if r[2] is not None else None,
+                    'titrage':     float(r[3]) if r[3] is not None else None,
+                    'prix_ht':     float(r[4]) if r[4] is not None else None,
+                    'prix_15':     (float(r[4]) * 1.15) if r[4] is not None else None,
+                    'couleur':     r[5],
+                    'type':        r[6],
+                })
             return jsonify(beers)
         except Exception as e:
             print(e)
-            return False
+            return jsonify({'error': 'getBeers failed'}), 500
 
     def getCAByFabricant(self):
-        try :
-            cur = mysql.connection.cursor()
-            cur.execute("select fab.NOM_FABRICANT, SUM(ROUND(a.Prix_achat*v.quantite,2)) CA FROM beer.ventes as v\
-                        INNER JOIN beer.article a ON v.ID_ARTICLE=a.ID_ARTICLE\
-                        INNER JOIN beer.marque f on a.ID_MARQUE=f.ID_MARQUE\
-                        INNER JOIN beer.fabricant fab on f.ID_FABRICANT=fab.ID_FABRICANT\
-                        group by fab.NOM_FABRICANT;\
-                ")
-            resp = cur.fetchall()
-            cur.close()
-            if resp is not None:
-                beers = []
-                for beer in resp:
-                    beers.append({
-                        'nom': beer[0],
-                        'CA': round(float(beer[1])*1.15,2),
-                    })
-                return jsonify(beers)
-            return jsonify({"message":"Nothing fetched"})
+        try:
+            sql = text("""
+                SELECT fab.NOM_FABRICANT, SUM(ROUND(a.Prix_achat*v.quantite,2)) AS CA
+                FROM beer.ventes AS v
+                INNER JOIN beer.article a ON v.ID_ARTICLE=a.ID_ARTICLE
+                INNER JOIN beer.marque f ON a.ID_MARQUE=f.ID_MARQUE
+                INNER JOIN beer.fabricant fab ON f.ID_FABRICANT=fab.ID_FABRICANT
+                GROUP BY fab.NOM_FABRICANT
+            """)
+            rows = db.session.execute(sql).fetchall()
+            return jsonify([
+                {'nom': r[0], 'CA': round(float(r[1]) * 1.15, 2) if r[1] is not None else None}
+                for r in rows
+            ])
         except Exception as e:
             print(e)
-            return False
+            return jsonify({'error': 'getCAByFabricant failed'}), 500
 
     def getVariation(self):
-        try :
-            cur = mysql.connection.cursor()
-            cur.execute("   select NOM_ARTICLE, qte15, qte16, ((qte16 - qte15) / qte15 * 100) as variation from article as a\
-                            inner join (select id_article as id15, sum(quantite) as qte15 from ventes where annee = 2015 group by id_article) as r15\
-                            inner join (select id_article as id16, sum(quantite) as qte16 from ventes where annee = 2016 group by id_article) as r16\
-                            on  a.id_article = r15.id15 and r15.id15 = r16.id16 and a.id_article = r16.id16\
-                            having variation between -1 and 1;")
-            resp = cur.fetchall()
-            cur.close()
-            if resp is not None:
-                beers = []
-                for beer in resp:
-                    beers.append({
-                        'nom': beer[0],
-                        'vente_2015': int(beer[1]),
-                        'vente_2016': int(beer[2]),
-                        'variation': float(beer[3]),
-                    })
-                return jsonify(beers)
-            return False
+        try:
+            sql = text("""
+                SELECT NOM_ARTICLE, qte15, qte16,
+                       ((qte16 - qte15) / qte15 * 100) AS variation
+                FROM article AS a
+                INNER JOIN (
+                    SELECT id_article AS id15, SUM(quantite) AS qte15
+                    FROM ventes WHERE annee = 2015 GROUP BY id_article
+                ) AS r15
+                INNER JOIN (
+                    SELECT id_article AS id16, SUM(quantite) AS qte16
+                    FROM ventes WHERE annee = 2016 GROUP BY id_article
+                ) AS r16
+                ON  a.id_article = r15.id15
+                AND r15.id15 = r16.id16
+                AND a.id_article = r16.id16
+                HAVING variation BETWEEN -1 AND 1;
+            """)
+            rows = db.session.execute(sql).fetchall()
+            return jsonify([
+                {
+                    'nom': r[0],
+                    'vente_2015': int(r[1]) if r[1] is not None else None,
+                    'vente_2016': int(r[2]) if r[2] is not None else None,
+                    'variation': float(r[3]) if r[3] is not None else None,
+                } for r in rows
+            ])
         except Exception as e:
             print(e)
-            return False
-
+            return jsonify({'error': 'getVariation failed'}), 500
 
     def doc(self):
         return render_template("doc.html")

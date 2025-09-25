@@ -1,5 +1,4 @@
 from app import app
-
 from app.controller.BeerController import BeerController
 
 @app.route('/api/beers')
